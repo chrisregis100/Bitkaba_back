@@ -10,6 +10,7 @@ const {
   settleInvoice,
   cancelInvoice,
   getInvoice,
+  getWalletInfo,
 } = require("ln-service");
 
 const app = express();
@@ -78,6 +79,17 @@ module.exports = checkLndConnection;
 app.use(checkLndConnection);
 
 // --- 4. API ENDPOINTS / ROUTES ---
+
+app.get("/api/getinfo", async (req, res) => {
+  try {
+    const info = await getWalletInfo({ lnd: req.lnd });
+    res.json(info);
+  } catch (error) {
+    console.error("Error getting node info:", error);
+    res.status(500).json({ error: "Failed to get node info.", details: error });
+  }
+});
+
 app.post("/create-invoice", async (req, res) => {
   const { amount, description } = req.body;
 
@@ -89,14 +101,14 @@ app.post("/create-invoice", async (req, res) => {
       lnd,
       tokens: amount,
       description,
-      id: crypto.randomUUID(), // identifiant unique
+      id: crypto.randomUUID(),
       secret,
     });
 
     res.json({
       payment_request: invoice.request,
       id: invoice.id,
-      secret: secretHex, // utile pour tester
+      secret: secretHex,
     });
   } catch (err) {
     console.error(err);
