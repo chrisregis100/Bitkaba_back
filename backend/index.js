@@ -14,6 +14,7 @@ const {
   createInvoice,
   getInvoices,
   createHodlInvoice,
+  subscribeToInvoice,
   settleHodlInvoice,
   pay,
 } = require("ln-service");
@@ -193,70 +194,87 @@ app.get("/api/getinfo", async (req, res) => {
   }
 });
 
-//Endpoint for creating a hodl invoice
+/**
+ * @route POST /api/holdinvoice
+ * @desc Create a hold invoice (HOLD invoice) that requires manual settlement.
+ * @body { amount: number, description: string, timestamp: number }
+ *
+ * This endpoint is useful for creating invoices that you want to manually settle later.
+ *
+ */
 
-app.post("/api/create-invoice", async (req, res) => {
-  const { amount, description } = req.body;
-
-  const secret = crypto.randomBytes(32);
-  const id = crypto.randomBytes(32);
+app.post("/api/holdinvoice", async (req, res) => {
   try {
-    const invoice = await createHodlInvoice({
-      lnd,
-      tokens: amount,
-      description,
-      id,
-      secret,
-    });
+    const { amount, description, timestamp } = req.body;
 
-    res.json({
-      payment_request: invoice.request,
-      id: id.toString("hex"), // lisible côté client
-      secret: secret.toString("hex"), // idem
-    });
-  } catch (err) {
-    console.error("Erreur création facture :", err);
-    res.status(500).json({ error: "Erreur création facture" });
-  }
-});
-
-app.post("/api/invoice", async (req, res) => {
-  try {
-    const { sats, description } = req.body;
-
-    if (sats === undefined || typeof sats !== "number" || sats <= 0) {
+    if (amount === undefined || typeof amount !== "number" || amount <= 0) {
       return res
         .status(400)
         .json({ error: "A positive numeric `sats` value is required." });
     }
 
-    const invoice = await createInvoice({
+    const invoice = await createHodlInvoice({
       lnd: req.lnd,
-      tokens: sats,
+      tokens: amount,
       description: description || "",
+      expires_at: timestamp ?? new Date(Date.now() + 3600000).toISOString(),
     });
 
-    res.json(invoice);
+    res.json({ invoice });
   } catch (error) {
-    console.error("Error creating invoice:", error);
+    console.error("Error creating HOLD invoice:", error);
     res
       .status(500)
-      .json({ error: "Failed to create invoice.", details: error });
+      .json({ error: "Failed to create HOLD invoice.", details: error });
   }
 });
 
 /**
  * Valider une livraison (settle)
  */
-app.post("/api/settle-invoice", async (req, res) => {
-  const { secret } = req.body;
-
+app.post("/api/settleholdinvoice", async (req, res) => {
   try {
-    await settleHodlInvoice({ lnd, secret });
-    res.json({ message: "✅Facture validée (settled)" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erreur lors de la validation" });
+    const { id, secret } = req.body;
+    if (!id || !secret) {
+      return res
+        .status(400)
+        .json({ error: "Both `id` and `secret` are required." });
+    }
+
+    const sub = subscribeToInvoice({
+      lnd: req.lnd,
+      id, // The invoice ID to subscribe to
+    });
+
+    sub.on("invoice_updated", async (invoice) => {
+      console.log("Invoice updated:", invoice);
+      // You can handle the invoice update here if needed
+
+      // For example, you could check if the invoice is settled
+
+      if (!invoice.is_held) {
+        return res
+          .status(400)
+          .json({ error: "This invoice seems like still not settled." });
+      }
+
+      if (invoice.is_confirmed) {
+        console.log("Invoice settled:", invoice);
+        sub.removeAllListeners(); // Stop listening once settled
+      }
+
+      const settled = await settleHodlInvoice({
+        lnd: req.lnd,
+        secret: secret,
+      });
+
+      res.json({ success: true, settled });
+    });
+  } catch (error) {
+    console.error("Error settling hold invoice:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to settle hold invoice.", details: error });
   }
 });
 
@@ -309,9 +327,11 @@ app.listen(port, () => {
     `- POST   /api/invoice  (Body: { "sats": 1000, "description": "Test" })`
   );
   console.log(
-    `- POST   /api/create-invoice (Body: { "amount": 1000, "description": "Test" })`
+    `- POST   /api/holdinvoice  (Body: { "amount": 1000, "description": "Test", "timestamp": 1679043200 })`
   );
-  console.log(`- POST   /api/settle-invoice (Body: { "secret": "xxxxxxxx" })`);
+  console.log(
+    `- POST   /api/settleholdinvoice (Body: { "id": "xxxxxxxx", "secret": "xxxxxxxx" })`
+  );
   console.log(`- POST   /api/pay      (Body: { "request": "lnbc..." })`);
   console.log("----------------------------------------------------");
 });
