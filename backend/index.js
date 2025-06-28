@@ -161,6 +161,10 @@ app.get("/invoice/:id", async (req, res) => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.send("Welcome to the BitKaba backend API!");
+});
+
 // --SERVER-STARTUP
 connectToLnd();
 
