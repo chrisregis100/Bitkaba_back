@@ -1,5 +1,12 @@
 const express = require("express");
 const router = express.Router();
+const { getLnd } = require('../lnd');
+
+// Middleware pour injecter lnd
+router.use((req, res, next) => {
+  req.lnd = getLnd();
+  next();
+});
 
 const {
   getWalletInfo,

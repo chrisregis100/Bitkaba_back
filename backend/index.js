@@ -1,3 +1,5 @@
+const { connectToLnd } = require('./lnd');
+connectToLnd(); // ← initialise la connexion LND AVANT d'importer les routes
 const express = require('express');
 const cors = require('cors');
 const chalk = require('chalk').default;
