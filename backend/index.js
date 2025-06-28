@@ -1,28 +1,33 @@
+// index.js
+
+// --- 1. DEPENDENCIES AND INITIALIZATION ---
 const express = require("express");
-const cors = require("cors");
-const dotenv = require("dotenv");
-const swaggerUi = require("swagger-ui-express");
-const swaggerSpec = require("./swaggerConfig");
+// The ln-service package provides higher-level functions and also exports authenticatedLndGrpc
 const { authenticatedLndGrpc } = require("ln-service");
-const crypto = require("crypto");
+const dotenv = require("dotenv");
+const cors = require("cors");
+// We need to import the methods we'll use from ln-service
 const {
-  createHoldInvoice,
-  settleInvoice,
-  cancelInvoice,
-  getInvoice,
   getWalletInfo,
+  getChainBalance,
+  getChannelBalance,
+  createInvoice,
+  getInvoices,
+  createHodlInvoice,
+  settleHodlInvoice,
+  pay,
 } = require("ln-service");
 
-const app = express();
-
+const crypto = require("crypto");
+// Load environment variables from a .env file
 dotenv.config();
 
-//middleware config
+// Create an Express application
+const app = express();
+
+// --- 2. MIDDLEWARE CONFIGURATION ---
 app.use(cors());
 app.use(express.json());
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-const port = process.env.PORT || 3000;
 
 // --- 3. LND CONNECTION SETUP ---
 let lnd; // This will hold our authenticated LND gRPC client
@@ -62,6 +67,8 @@ function connectToLnd() {
   }
 }
 
+// --- 4. API ENDPOINTS / ROUTES ---
+
 // Middleware to check if the LND connection is established
 const checkLndConnection = (req, res, next) => {
   if (!lnd) {
@@ -74,11 +81,107 @@ const checkLndConnection = (req, res, next) => {
   next();
 };
 
-module.exports = checkLndConnection;
-
 app.use(checkLndConnection);
 
-// --- 4. API ENDPOINTS / ROUTES ---
+/**
+ * @route   GET /api/getinfo
+ * @desc    Get general information about the LND node.
+ */
+app.get("/api/getinfo", async (req, res) => {
+  try {
+    const info = await getWalletInfo({ lnd: req.lnd });
+    res.json(info);
+  } catch (error) {
+    console.error("Error getting node info:", error);
+    res.status(500).json({ error: "Failed to get node info.", details: error });
+  }
+});
+
+/**
+ * @route   GET /api/balance
+ * @desc    Get the on-chain and off-chain (channel) balances.
+ */
+app.get("/api/balance", async (req, res) => {
+  try {
+    const onChainBalance = await getChainBalance({ lnd: req.lnd });
+    const offChainBalance = await getChannelBalance({ lnd: req.lnd });
+    res.json({
+      onChainBalance,
+      offChainBalance,
+    });
+  } catch (error) {
+    console.error("Error getting balance:", error);
+    res.status(500).json({ error: "Failed to get balance.", details: error });
+  }
+});
+
+/**
+ * @route   POST /api/invoice
+ * @desc    Create a new Lightning invoice.
+ * @body    { sats: number, description: string }
+ */
+app.post("/api/invoice", async (req, res) => {
+  try {
+    const { sats, description } = req.body;
+
+    if (sats === undefined || typeof sats !== "number" || sats <= 0) {
+      return res
+        .status(400)
+        .json({ error: "A positive numeric `sats` value is required." });
+    }
+
+    const invoice = await createInvoice({
+      lnd: req.lnd,
+      tokens: sats,
+      description: description || "",
+    });
+
+    res.json(invoice);
+  } catch (error) {
+    console.error("Error creating invoice:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to create invoice.", details: error });
+  }
+});
+
+/**
+ * @route   GET /api/invoices
+ * @desc    List all invoices.
+ */
+app.get("/api/invoices", async (req, res) => {
+  try {
+    const { invoices } = await getInvoices({ lnd: req.lnd });
+    res.json(invoices);
+  } catch (error) {
+    console.error("Error listing invoices:", error);
+    res.status(500).json({ error: "Failed to list invoices.", details: error });
+  }
+});
+
+/**
+ * @route   POST /api/pay
+ * @desc    Pay a Lightning invoice (payment request string).
+ * @body    { request: string }
+ */
+app.post("/api/pay", async (req, res) => {
+  try {
+    const { request } = req.body;
+
+    if (!request) {
+      return res
+        .status(400)
+        .json({ error: "A `request` string (BOLT11 invoice) is required." });
+    }
+
+    const paymentResult = await pay({ lnd: req.lnd, request });
+
+    res.json({ success: true, payment_info: paymentResult });
+  } catch (error) {
+    console.error("Error paying invoice:", error);
+    res.status(500).json({ error: "Failed to pay invoice.", details: error });
+  }
+});
 
 app.get("/api/getinfo", async (req, res) => {
   try {
@@ -90,40 +193,66 @@ app.get("/api/getinfo", async (req, res) => {
   }
 });
 
-app.post("/create-invoice", async (req, res) => {
+//Endpoint for creating a hodl invoice
+
+app.post("/api/create-invoice", async (req, res) => {
   const { amount, description } = req.body;
 
   const secret = crypto.randomBytes(32);
-  const secretHex = secret.toString("hex");
-
+  const id = crypto.randomBytes(32);
   try {
-    const invoice = await createHoldInvoice({
+    const invoice = await createHodlInvoice({
       lnd,
       tokens: amount,
       description,
-      id: crypto.randomUUID(),
+      id,
       secret,
     });
 
     res.json({
       payment_request: invoice.request,
-      id: invoice.id,
-      secret: secretHex,
+      id: id.toString("hex"), // lisible côté client
+      secret: secret.toString("hex"), // idem
     });
   } catch (err) {
-    console.error(err);
+    console.error("Erreur création facture :", err);
     res.status(500).json({ error: "Erreur création facture" });
+  }
+});
+
+app.post("/api/invoice", async (req, res) => {
+  try {
+    const { sats, description } = req.body;
+
+    if (sats === undefined || typeof sats !== "number" || sats <= 0) {
+      return res
+        .status(400)
+        .json({ error: "A positive numeric `sats` value is required." });
+    }
+
+    const invoice = await createInvoice({
+      lnd: req.lnd,
+      tokens: sats,
+      description: description || "",
+    });
+
+    res.json(invoice);
+  } catch (error) {
+    console.error("Error creating invoice:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to create invoice.", details: error });
   }
 });
 
 /**
  * Valider une livraison (settle)
  */
-app.post("/settle-invoice", async (req, res) => {
+app.post("/api/settle-invoice", async (req, res) => {
   const { secret } = req.body;
 
   try {
-    await settleInvoice({ lnd, secret });
+    await settleHodlInvoice({ lnd, secret });
     res.json({ message: "✅Facture validée (settled)" });
   } catch (err) {
     console.error(err);
@@ -168,6 +297,21 @@ app.get("/", (req, res) => {
 // --SERVER-STARTUP
 connectToLnd();
 
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
+  console.log("----------------------------------------------------");
+  console.log("Available Endpoints:");
+  console.log(`- GET    /api/getinfo`);
+  console.log(`- GET    /api/balance`);
+  console.log(`- GET    /api/invoices`);
+  console.log(
+    `- POST   /api/invoice  (Body: { "sats": 1000, "description": "Test" })`
+  );
+  console.log(
+    `- POST   /api/create-invoice (Body: { "amount": 1000, "description": "Test" })`
+  );
+  console.log(`- POST   /api/settle-invoice (Body: { "secret": "xxxxxxxx" })`);
+  console.log(`- POST   /api/pay      (Body: { "request": "lnbc..." })`);
+  console.log("----------------------------------------------------");
 });
