@@ -1,16 +1,16 @@
-// swaggerConfig.js
 const swaggerJSDoc = require("swagger-jsdoc");
 
 const options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "API Test",
+      title: "BitKaba LND API",
       version: "1.0.0",
     },
   },
-  apis: ["./routes/*.js"], // Chemins des fichiers où sont tes docs en commentaire
+  apis: ["./routes/*.js"],
 };
 
 const swaggerSpec = swaggerJSDoc(options);
+
 module.exports = swaggerSpec;
