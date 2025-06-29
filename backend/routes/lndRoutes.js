@@ -338,18 +338,33 @@ router.post("/settleholdinvoice", async (req, res) => {
     }
 
     const sub = subscribeToInvoice({ lnd: req.lnd, id });
+    let responded = false;
 
     sub.on("invoice_updated", async (invoice) => {
+      if (responded) return;
+
       if (!invoice.is_held) {
+        responded = true;
+        sub.removeAllListeners();
         return res.status(400).json({ error: "Invoice is not held." });
       }
 
       if (invoice.is_confirmed) {
+        responded = true;
         sub.removeAllListeners();
+        return res.status(400).json({ error: "Invoice already settled." });
       }
 
-      const settled = await settleHodlInvoice({ lnd: req.lnd, secret });
-      res.json({ success: true, settled });
+      try {
+        const settled = await settleHodlInvoice({ lnd: req.lnd, secret });
+        responded = true;
+        sub.removeAllListeners();
+        res.json({ success: true, settled });
+      } catch (err) {
+        responded = true;
+        sub.removeAllListeners();
+        res.status(500).json({ error: "Failed to settle hold invoice.", details: err });
+      }
     });
   } catch (error) {
     console.error("Error settling hold invoice:", error);
