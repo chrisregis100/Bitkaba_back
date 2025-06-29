@@ -45,7 +45,7 @@ function connectToLnd() {
     console.log("Successfully connected to LND node.");
   } catch (error) {
     // Affiche une erreur si la connexion échoue
-    console.error("Failed to connect to LND:", error.message);
+    console.error("Failed to connect to LND:", error);
     // Arrête le processus avec une erreur
     process.exit(1);
   }
