@@ -1,0 +1,90 @@
+version: "3.8"
+services:
+  bitcoind:
+    image: btcpayserver/bitcoin:26.0
+    container_name: bitcoind
+    command: -printtoconsole
+      -regtest=1
+      -server=1
+      -rpcuser=bitcoin
+      -rpcpassword=bitcoinpass
+      -txindex=1
+      -fallbackfee=0.0002
+    ports:
+      - "18443:18443"
+    volumes:
+      - bitcoind_data:/bitcoin
+
+  lnd-vendeur:
+    image: lightninglabs/lnd:v0.17.3-beta
+    container_name: lnd-vendeur
+    depends_on:
+      - bitcoind
+    command:
+      - "lnd"
+      - "--alias=VendeurNode"
+      - "--bitcoin.active"
+      - "--bitcoin.regtest"
+      - "--bitcoin.node=bitcoind"
+      - "--bitcoind.rpchost=bitcoind"
+      - "--bitcoind.rpcuser=bitcoin"
+      - "--bitcoind.rpcpass=bitcoinpass"
+      - "--bitcoind.zmqpubrawblock=tcp://bitcoind:28332"
+      - "--bitcoind.zmqpubrawtx=tcp://bitcoind:28333"
+      - "--restlisten=0.0.0.0:8080"
+      - "--rpclisten=0.0.0.0:10009"
+      - "--tlsextraip=0.0.0.0"
+      - "--listen=0.0.0.0:9735"
+    volumes:
+      - lnd_vendeur_data:/root/.lnd
+    ports:
+      - "10009:10009"
+      - "8080:8080"
+
+  lnd-client:
+    image: lightninglabs/lnd:v0.17.3-beta
+    container_name: lnd-client
+    depends_on:
+      - bitcoind
+    command:
+      - "lnd"
+      - "--alias=ClientNode"
+      - "--bitcoin.active"
+      - "--bitcoin.regtest"
+      - "--bitcoin.node=bitcoind"
+      - "--bitcoind.rpchost=bitcoind"
+      - "--bitcoind.rpcuser=bitcoin"
+      - "--bitcoind.rpcpass=bitcoinpass"
+      - "--bitcoind.zmqpubrawblock=tcp://bitcoind:28332"
+      - "--bitcoind.zmqpubrawtx=tcp://bitcoind:28333"
+      - "--restlisten=0.0.0.0:8081"
+      - "--rpclisten=0.0.0.0:10010"
+      - "--tlsextraip=0.0.0.0"
+      - "--listen=0.0.0.0:9736"
+    volumes:
+      - lnd_client_data:/root/.lnd
+    ports:
+      - "10010:10010"
+      - "8081:8081"
+
+  backend:
+    build: ./backend
+    container_name: htlc-backend
+    depends_on:
+      - lnd-client
+      - lnd-vendeur
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "5005:3000"
+    environment:
+      - LND_VENDEUR_GRPC=host.docker.internal:10009
+      - LND_CLIENT_GRPC=host.docker.internal:10010
+      - BACKEND_PORT=5005
+
+volumes:
+  bitcoind_data:
+  lnd_vendeur_data:
+  lnd_client_data:
